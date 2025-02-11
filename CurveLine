@@ -60,7 +60,7 @@ def contourDetection(frame):
     roi_x2 = roi_x1 + roi_size
     roi_y2 = roi_y1 + roi_size
 
-    roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # Extract ROI (square region)
+    roi = frame[roi_y1:roi_y2, roi_x1:roi_x2] 
 
     
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -125,7 +125,7 @@ def main():
         processed_frame = contourDetection(frame)
         cv2.imshow("Lane Detection with Centerline", processed_frame)
 
-        # Write the processed frame to the video file
+        
         out.write(processed_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'): 

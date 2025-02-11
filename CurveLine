@@ -1,0 +1,122 @@
+import cv2
+import numpy as np
+import cv2.ximgproc as ximgproc
+
+# Adjustable Parameters
+WIDENESS = 10  # Thickness of lane lines and centerline
+ROI_SIZE_RATIO = 0.5  # Square ROI size (percentage of screen width)
+SMOOTHING_DEGREE = 3  # Polynomial degree for smoothing centerline
+INTERPOLATION_POINTS = 50  # Ensures equal spacing between contour points
+END_SMOOTHING_WINDOW = 5  # Moving average smoothing window for ends
+
+def initialize_video_writer(cap, filename="output.avi"):
+    """ Initializes the video writer to record the output. """
+    frame_width = int(cap.get(3))  # Get video width
+    frame_height = int(cap.get(4))  # Get video height
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Codec for AVI format
+    fps = 20  # Frames per second (adjust if needed)
+
+    return cv2.VideoWriter(filename, fourcc, fps, (frame_width, frame_height))
+
+def midCalc(contours):
+    """ Compute the midline by averaging corresponding points from both contours. """
+    if len(contours) < 2:
+        return None
+
+    left_contour = contours[0].squeeze()
+    right_contour = contours[1].squeeze()
+
+    # Ensure contours have the same number of points
+    min_length = min(len(left_contour), len(right_contour))
+    left_contour = left_contour[:min_length]
+    right_contour = right_contour[:min_length]
+
+    # Compute midpoint
+    mid_x = (left_contour[:, 0] + right_contour[:, 0]) // 2
+    mid_y = (left_contour[:, 1] + right_contour[:, 1]) // 2
+    midline = np.column_stack((mid_x, mid_y))
+
+    return midline
+
+def contourDetection(frame):
+    """ Detects lane contours and computes the midline with improved accuracy. """
+    height, width, _ = frame.shape
+
+    # Define square ROI in the middle of the screen
+    roi_size = int(width * ROI_SIZE_RATIO)
+    roi_x1 = (width // 2) - (roi_size // 2)
+    roi_y1 = (height // 2) - (roi_size // 2)
+    roi_x2 = roi_x1 + roi_size
+    roi_y2 = roi_y1 + roi_size
+
+    roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # Extract ROI (square region)
+
+    # Convert to grayscale, apply Gaussian blur and edge detection
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+
+    # Apply skeletonization using ximgproc
+    skeleton = ximgproc.thinning(edges)
+
+    # Find contours in the skeletonized image
+    contours, _ = cv2.findContours(skeleton, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    # Sort contours by area and keep the two largest (assumed curved lanes)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:2]
+
+    # Ensure we have two valid contours
+    if len(contours) < 2:
+        return frame
+
+    # Offset contours to match ROI in the original frame
+    for contour in contours:
+        contour[:, :, 0] += roi_x1
+        contour[:, :, 1] += roi_y1
+
+    # Create an overlay mask for drawing
+    mask = np.zeros_like(frame, dtype=np.uint8)
+
+    # Draw thicker lane lines
+    for contour in contours:
+        cv2.drawContours(mask, [contour], -1, (0, 255, 0), WIDENESS)
+
+    # Compute and smooth the midline
+    midline = midCalc(contours)
+    if midline is not None and len(midline) > 1:
+        for i in range(len(midline) - 1):
+            cv2.line(mask, tuple(midline[i]), tuple(midline[i + 1]), (0, 0, 255), WIDENESS)
+
+    # Blend the mask onto the original frame
+    blended_frame = cv2.addWeighted(frame, 1, mask, 0.7, 0)
+
+    # Draw ROI square for visualization
+    cv2.rectangle(blended_frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (255, 255, 255), 2)
+
+    return blended_frame
+
+def main():
+    """ Main function to run lane detection in real-time and record video. """
+    cap = cv2.VideoCapture(0)  # Initialize Camera
+    out = initialize_video_writer(cap)  # Initialize video writer
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        processed_frame = contourDetection(frame)
+        cv2.imshow("Lane Detection with Centerline", processed_frame)
+
+        # Write the processed frame to the video file
+        out.write(processed_frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
+            break
+
+    cap.release()
+    out.release()  # Stop video recording
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
